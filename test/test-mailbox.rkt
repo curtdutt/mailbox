@@ -109,3 +109,27 @@
                         ['C 'C])
                
                'hello))
+
+
+(test-case
+ "receive ? bug"
+ (mailbox-clear)
+ (thread-send (current-thread) 'a)
+ 
+ (receive [(? (λ (x) #f) 'a)
+           #f]
+          [(timeout 0)
+           #f])
+ 
+ (check-equal? (mailbox->list) '(a)))
+
+
+(test-case
+ "receive when"
+(mailbox-clear)
+
+(check-true (receive [(when #t)
+                      #t])))
+
+
+           

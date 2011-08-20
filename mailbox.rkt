@@ -73,12 +73,12 @@
                                (with-handlers ([exn:misc:match? (λ (exn) #f)])
                                  (match msg #,@(reverse match-clauses))))
                              #,@(reverse events))
-             
            
-           (syntax-case (first stx) (event timeout)
+           
+           (syntax-case (first stx) (event timeout when)
              [((event evt) code ...)
               (loop (rest stx)
-                    (cons #`(wrap-evt evt
+                    (cons #`(handle-evt evt
                                       (λ (evt)
                                         ((λ () code ...))))
                           events)
@@ -86,9 +86,16 @@
              
              [((timeout time) code ...)
               (loop (rest stx)
-                    (cons #`(wrap-evt (alarm-evt (+ (current-inexact-milliseconds) (* time 1000)))
-                                      (λ (evt)
-                                        ((λ () code ...))))
+                    (cons #`(handle-evt (alarm-evt (+ (current-inexact-milliseconds) (* time 1000)))
+                                        (λ (evt)
+                                          ((λ () code ...))))
+                          events)
+                    match-clauses)]
+             
+             [((when condition ...) code ...)
+              (loop (rest stx)
+                    (cons #`(handle-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
+                                        (λ (evt) ((λ () code ...))))
                           events)
                     match-clauses)]
              
