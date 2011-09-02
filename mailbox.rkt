@@ -64,43 +64,46 @@
      ;parse the list of syntaxes and separate them into events and match clauses
      ;using the loop
      ;then transform the syntax into the actual call to matcher
+     ;we need to remain tail recursive, so eatch event and match clause actually returns
+     ;the continuation to invoke once the event or match is selected
+     ;and we invoke that in tail position
      (let loop ([stx (syntax-e #`(pat ...))]
                 [events empty]
                 [match-clauses empty])
        (if (empty? stx)
-           #`(mailbox-select (λ (msg)
+           #`((mailbox-select (λ (msg)
                                ;if the match fails we return #f, and ignore the exception
                                (with-handlers ([exn:misc:match? (λ (exn) #f)])
                                  (match msg #,@(reverse match-clauses))))
-                             #,@(reverse events))
-           
-           
+                              #,@(reverse events)))
+               
            (syntax-case (first stx) (event timeout when)
              [((event evt) code ...)
               (loop (rest stx)
-                    (cons #`(handle-evt evt
-                                      (λ (evt)
-                                        ((λ () code ...))))
+                    (cons #`(wrap-evt evt
+                                      (λ (evt) (λ () code ...)))
                           events)
                     match-clauses)]
              
              [((timeout time) code ...)
               (loop (rest stx)
-                    (cons #`(handle-evt (alarm-evt (+ (current-inexact-milliseconds) (* time 1000)))
-                                        (λ (evt)
-                                          ((λ () code ...))))
+                    (cons #`(wrap-evt (alarm-evt (+ (current-inexact-milliseconds) (* time 1000)))
+                                      (λ (evt) (λ () code ...)))
                           events)
                     match-clauses)]
              
              [((when condition ...) code ...)
               (loop (rest stx)
-                    (cons #`(handle-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
-                                        (λ (evt) ((λ () code ...))))
+                    (cons #`(wrap-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
+                                        (λ (evt) (λ () code ...)))
                           events)
                     match-clauses)]
              
-             [(match-clause ...)
+             [(match-clause match-code ...)
               (loop (rest stx)
                     events
-                    (cons #`(match-clause ...)
+                    ;here the match clause returns a closure over the code that gets invoked
+                    ;after the match succeeds so it can be called from tail position
+                    ;after the mailbox-select is performed
+                    (cons #`(match-clause (λ () match-code ...))
                           match-clauses))])))]))

@@ -90,8 +90,8 @@
  
  (check-exn (λ (exn) (equal? exn 'foo))
             (λ ()
-              (receive ['B
-                        (raise 'foo)])))
+              (receive [(? (λ (x) (raise 'foo)) 'B)
+                        'B])))
  
  (check-equal? (receive) 'B)
  
