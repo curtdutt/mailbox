@@ -3,7 +3,7 @@
 (define name "okcomps/mailbox: Thread mailbox utilities, including receive primitive.")
 
 (define blurb
-  '((p "okcomps/mailbox provides utilities for manipulating a thread's mailbox. It includes a receive primitive"
+  '((p "okcomps/mailbox provides utilities for manipulating a thread's mailbox. It includes a receive primitive "
        "which is similar to erlang's receive.")))
 
 (define release-notes
