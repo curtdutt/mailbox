@@ -87,7 +87,7 @@
              
              [((timeout time) code ...)
               (loop (rest stx)
-                    (cons #`(wrap-evt (alarm-evt (+ (current-inexact-milliseconds) (* time 1000)))
+                    (cons #`(wrap-evt (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)
                                       (λ (evt) (λ () code ...)))
                           events)
                     match-clauses)]
