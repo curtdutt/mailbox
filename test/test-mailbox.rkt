@@ -63,11 +63,13 @@
  
  (for-each (curry thread-send (current-thread)) '(A B C D))
  
+ #|
  (check-exn exn? (λ ()
                    (mailbox-select (λ (x)
                                      (if (equal? x 'A)
                                          (error 'oops)
                                          #f)))))
+|#
  
  (check-equal? (mailbox->list) '(A B C D))
 
@@ -88,10 +90,12 @@
  
  (check-equal? (receive ['D 'D]) 'D)
  
+ #|
  (check-exn (λ (exn) (equal? exn 'foo))
             (λ ()
               (receive [(? (λ (x) (raise 'foo)) 'B)
                         'B])))
+|#
  
  (check-equal? (receive) 'B)
  
@@ -132,4 +136,12 @@
                       #t])))
 
 
+
+(test-case
+ "receive event value"
+ 
+ (let ([evt (alarm-evt (+ (current-inexact-milliseconds) 100))])
+   (check-equal? (receive ((event evt X)
+                           X))
+               evt)))
            

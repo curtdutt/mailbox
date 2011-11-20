@@ -31,24 +31,16 @@
   ;so we catch any exceptions that occur when executing "untrusted" code
   ;and restore the mailbox to the state it was in prior to the call 
   (let loop ([unmatched-messages empty])
-    (let ([ready-event (call-with-exception-handler
-                        (λ (exn)
-                          (thread-rewind-receive unmatched-messages))
-                        (λ () (apply sync (thread-receive-evt) events)))])
+    (let ([ready-event (apply sync (thread-receive-evt) events)])
       (cond [(equal? ready-event (thread-receive-evt))
              (let ([next (thread-receive)])
                ;when an exception occurs in a predicate
                ;we must rewind all messages back into the mailbox
                ;and then raise the exception
-               (cond [(call-with-exception-handler 
-                       (λ (exn)
-                         (thread-rewind-receive (cons next unmatched-messages))
-                         exn)
-                       (λ ()
-                         (match next))) =>
-                                        (λ (result)
-                                          (thread-rewind-receive unmatched-messages)
-                                          result)]
+               (cond [(match next) =>
+                                   (λ (result)
+                                     (thread-rewind-receive unmatched-messages)
+                                     result)]
                      [else
                       (loop (cons next unmatched-messages))]))]
             [else
@@ -67,43 +59,52 @@
      ;we need to remain tail recursive, so eatch event and match clause actually returns
      ;the continuation to invoke once the event or match is selected
      ;and we invoke that in tail position
-     (let loop ([stx (syntax-e #`(pat ...))]
-                [events empty]
-                [match-clauses empty])
-       (if (empty? stx)
-           #`((mailbox-select (λ (msg)
-                               ;if the match fails we return #f, and ignore the exception
-                               (with-handlers ([exn:misc:match? (λ (exn) #f)])
-                                 (match msg #,@(reverse match-clauses))))
-                              #,@(reverse events)))
-               
-           (syntax-case (first stx) (event timeout when)
-             [((event evt) code ...)
-              (loop (rest stx)
-                    (cons #`(wrap-evt evt
-                                      (λ (evt) (λ () code ...)))
-                          events)
-                    match-clauses)]
-             
-             [((timeout time) code ...)
-              (loop (rest stx)
-                    (cons #`(wrap-evt (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)
-                                      (λ (evt) (λ () code ...)))
-                          events)
-                    match-clauses)]
-             
-             [((when condition ...) code ...)
-              (loop (rest stx)
-                    (cons #`(wrap-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
-                                        (λ (evt) (λ () code ...)))
-                          events)
-                    match-clauses)]
-             
-             [(match-clause match-code ...)
-              (loop (rest stx)
-                    events
-                    ;here the match clause returns a closure over the code that gets invoked
-                    ;after the match succeeds so it can be called from tail position
-                    ;after the mailbox-select is performed
-                    (cons #`(match-clause (λ () match-code ...))
-                          match-clauses))])))]))
+     (let ([code (let loop ([stx (syntax-e #`(pat ...))]
+                            [events empty]
+                            [match-clauses empty])
+                   (if (empty? stx)
+                       #`((mailbox-select (λ (msg)
+                                            ;if the match fails we return #f, and ignore the exception
+                                            (match msg #,@(reverse (cons #`(_ #f) match-clauses))))
+                                          #,@(reverse events)))
+                       
+                       (syntax-case (first stx) (event timeout when)
+                         [((event evt) code ...)
+                          (loop (rest stx)
+                                (cons #`(wrap-evt evt
+                                                  (λ (evt) (λ () code ...)))
+                                      events)
+                                match-clauses)]
+                         
+                         [((event evt id) code ...)
+                          (loop (rest stx)
+                                (cons #`(wrap-evt evt
+                                                  (λ (res) (λ () 
+                                                             (let ([id res])
+                                                               code ...))))
+                                      events)
+                                match-clauses)]
+                         
+                         [((timeout time) code ...)
+                          (loop (rest stx)
+                                (cons #`(wrap-evt (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)
+                                                  (λ (evt) (λ () code ...)))
+                                      events)
+                                match-clauses)]
+                         
+                         [((when condition ...) code ...)
+                          (loop (rest stx)
+                                (cons #`(wrap-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
+                                                  (λ (evt) (λ () code ...)))
+                                      events)
+                                match-clauses)]
+                         
+                         [(match-clause match-code ...)
+                          (loop (rest stx)
+                                events
+                                ;here the match clause returns a closure over the code that gets invoked
+                                ;after the match succeeds so it can be called from tail position
+                                ;after the mailbox-select is performed
+                                (cons #`(match-clause (λ () match-code ...))
+                                      match-clauses))])))])
+       code)]))
