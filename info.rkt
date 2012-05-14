@@ -16,7 +16,7 @@
 
 (define required-core-version "4.0")
 
-(define version "1.0")
+(define version "1.1")
 
 (define repositories '("4.x"))
 
