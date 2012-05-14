@@ -3,7 +3,8 @@
 (provide mailbox-select
          mailbox->list
          mailbox-clear
-         receive)
+         receive
+         try-receive)
 
 (require racket/list
          racket/match
@@ -46,6 +47,33 @@
             [else
              (thread-rewind-receive unmatched-messages)
              ready-event]))))
+
+#|
+Attempts to match and return the first message that does so.
+
+If no matches occur, then the mailbox is left unchanged and mailbox-try-select returns #f
+
+
+Match is function that takes a single value and returns either #f when it does not match or a value when it does match.
+
+Mailbox-try-select returns what match returns 
+|#
+(define (mailbox-try-select match)
+   (let loop ([unmatched-messages empty])                              
+     (let ([next (thread-try-receive)])
+       (if next
+           (cond [(match next) =>
+                               (λ (result)
+                                 (thread-rewind-receive unmatched-messages)
+                                 result)]
+                 [else
+                  (loop (cons next unmatched-messages))])
+           (begin
+             (thread-rewind-receive unmatched-messages)
+             #f)))))
+                               
+       
+
 
 
 (define-syntax (receive stx)
@@ -108,3 +136,15 @@
                                 (cons #`(match-clause (λ () match-code ...))
                                       match-clauses))])))])
        code)]))
+
+
+#|
+Non blocking, returns the first matching message or #f if no matches exist within the mailbox.
+|#
+(define-syntax (try-receive stx)
+  (syntax-case stx ()
+    [(_)
+     #`(thread-try-receive)]
+    [(_ pat ...)
+     #`(mailbox-try-select (λ (msg)
+                             (match msg pat ... (_ #f))))]))

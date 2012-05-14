@@ -144,4 +144,17 @@
    (check-equal? (receive ((event evt X)
                            X))
                evt)))
+
+
+(test-case
+ "try-receive"
+ 
+ (mailbox-clear)
+ (thread-send (current-thread) "a")
+ 
+ (check-false (try-receive ("b" #t)))
+ 
+ (check-true (try-receive ("a" #t))))
+               
+               
            
