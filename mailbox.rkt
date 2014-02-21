@@ -9,7 +9,7 @@
 (require racket/list
          racket/match
          (for-syntax racket/base)
-         (for-syntax racket/list))
+         (for-syntax syntax/parse))
 
 (define (mailbox-clear)
   (when (thread-try-receive)
@@ -25,28 +25,35 @@
             (thread-rewind-receive lst)
             (reverse lst))))))
 
-
-(define (mailbox-select match . events)
-  ;we guard any operations that may execute code that
-  ;might fail.
-  ;so we catch any exceptions that occur when executing "untrusted" code
-  ;and restore the mailbox to the state it was in prior to the call 
-  (let loop ([unmatched-messages empty])
-    (let ([ready-event (apply sync (thread-receive-evt) events)])
-      (cond [(equal? ready-event (thread-receive-evt))
-             (let ([next (thread-receive)])
-               ;when an exception occurs in a predicate
-               ;we must rewind all messages back into the mailbox
-               ;and then raise the exception
-               (cond [(match next) =>
-                                   (λ (result)
-                                     (thread-rewind-receive unmatched-messages)
-                                     result)]
-                     [else
-                      (loop (cons next unmatched-messages))]))]
-            [else
-             (thread-rewind-receive unmatched-messages)
-             ready-event]))))
+(define (mailbox-select #:match-fail-value (fail-value #f) proc . events)
+  (parameterize-break #f
+                      (let loop ([unmatched-messages empty])
+                        (let ([ready-event (call-with-exception-handler 
+                                            (λ (exn)
+                                              (thread-rewind-receive unmatched-messages)
+                                              exn)
+                                            (λ ()
+                                              (parameterize-break #t
+                                                                  (apply sync (thread-receive-evt) events))))])
+                          (if (equal? ready-event (thread-receive-evt))
+                              (let* ([next (thread-receive)]
+                                     [result
+                                      (call-with-exception-handler 
+                                       (λ (exn)
+                                         (thread-rewind-receive unmatched-messages)
+                                         exn)
+                                       (λ ()
+                                         (parameterize-break #t
+                                                             (proc next))))])
+                                (if (equal? result fail-value)
+                                    (loop (cons next unmatched-messages))
+                                    (begin
+                                      (thread-rewind-receive unmatched-messages)
+                                      result)))
+                              (begin
+                                (thread-rewind-receive unmatched-messages)
+                                ready-event))))))
+                                       
 
 #|
 Attempts to match and return the first message that does so.
@@ -71,71 +78,59 @@ Mailbox-try-select returns what match returns
            (begin
              (thread-rewind-receive unmatched-messages)
              #f)))))
-                               
-       
+                   
+
+(begin-for-syntax
+  (define-syntax-class match-clause
+    #:description "match-clause"
+    (pattern (pat body ...+)))
+  
+  (define-syntax-class when-clause
+    #:description "when-clause"
+    (pattern (((~literal when) condition) code ...+)
+             #:with event-code #`(handle-evt (guard-evt 
+                                              (λ () 
+                                                (if condition always-evt never-evt)))
+                                             (λ (evt) 
+                                               code ...))))
+  
+  (define-syntax-class timeout-clause
+    #:description "timeout-clause"
+    (pattern (((~literal timeout) time) code ...+)
+             #:with event-code #`(handle-evt (guard-evt 
+                                              (λ () 
+                                                (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)))
+                                             (λ (evt) 
+                                               code ...))))
+  
+  (define-syntax-class event-clause
+    #:description "event-claues"
+    (pattern (((~literal event) evt) code ...+)
+             #:with event-code #`(handle-evt evt           
+                                             (λ (e)
+                                               code ...)))
+    (pattern (((~literal event) evt id:id) code ...+)
+             #:with event-code #`(handle-evt evt           
+                                             (λ (e)
+                                               ((λ (id) code ...) e))))))
+  
+(define no-match (gensym 'no-match))
 
 
-
+    
 (define-syntax (receive stx)
-  (syntax-case stx ()
+  (syntax-parse stx
     [(_)
      #`(thread-receive)]
-    [(_ pat ...)
-     ;parse the list of syntaxes and separate them into events and match clauses
-     ;using the loop
-     ;then transform the syntax into the actual call to matcher
-     ;we need to remain tail recursive, so eatch event and match clause actually returns
-     ;the continuation to invoke once the event or match is selected
-     ;and we invoke that in tail position
-     (let ([code (let loop ([stx (syntax-e #`(pat ...))]
-                            [events empty]
-                            [match-clauses empty])
-                   (if (empty? stx)
-                       #`((mailbox-select (λ (msg)
-                                            ;if the match fails we return #f, and ignore the exception
-                                            (match msg #,@(reverse (cons #`(_ #f) match-clauses))))
-                                          #,@(reverse events)))
-                       
-                       (syntax-case (first stx) (event timeout when)
-                         [((event evt) code ...)
-                          (loop (rest stx)
-                                (cons #`(wrap-evt evt
-                                                  (λ (evt) (λ () code ...)))
-                                      events)
-                                match-clauses)]
-                         
-                         [((event evt id) code ...)
-                          (loop (rest stx)
-                                (cons #`(wrap-evt evt
-                                                  (λ (res) (λ () 
-                                                             (let ([id res])
-                                                               code ...))))
-                                      events)
-                                match-clauses)]
-                         
-                         [((timeout time) code ...)
-                          (loop (rest stx)
-                                (cons #`(wrap-evt (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)
-                                                  (λ (evt) (λ () code ...)))
-                                      events)
-                                match-clauses)]
-                         
-                         [((when condition ...) code ...)
-                          (loop (rest stx)
-                                (cons #`(wrap-evt (guard-evt (λ () (if ((λ () condition ...)) always-evt never-evt)))
-                                                  (λ (evt) (λ () code ...)))
-                                      events)
-                                match-clauses)]
-                         
-                         [(match-clause match-code ...)
-                          (loop (rest stx)
-                                events
-                                ;here the match clause returns a closure over the code that gets invoked
-                                ;after the match succeeds so it can be called from tail position
-                                ;after the mailbox-select is performed
-                                (cons #`(match-clause (λ () match-code ...))
-                                      match-clauses))])))])
-       code)]))
+    [(_ (~or E:event-clause T:timeout-clause W:when-clause M:match-clause) ...)
+     #`(mailbox-select #:match-fail-value no-match
+                       (λ (msg) 
+                         (match msg
+                           #,@#'(M ...)
+                           [_
+                            no-match]))
+                       #,@(syntax->list #'(E.event-code ... T.event-code ... W.event-code ...)))]))
+
 
 
 #|

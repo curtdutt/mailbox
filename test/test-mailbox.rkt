@@ -16,7 +16,6 @@
  (for-each (curry thread-send (current-thread)) (list 'A 'B 'C 'D))
  
  (mailbox-clear)
- 
  (check-false (thread-try-receive)))
 
 
@@ -63,14 +62,6 @@
  
  (for-each (curry thread-send (current-thread)) '(A B C D))
  
- #|
- (check-exn exn? (λ ()
-                   (mailbox-select (λ (x)
-                                     (if (equal? x 'A)
-                                         (error 'oops)
-                                         #f)))))
-|#
- 
  (check-equal? (mailbox->list) '(A B C D))
 
  (mailbox-clear)
@@ -89,14 +80,7 @@
  (check-equal? (receive ['C 'C]) 'C)
  
  (check-equal? (receive ['D 'D]) 'D)
- 
- #|
- (check-exn (λ (exn) (equal? exn 'foo))
-            (λ ()
-              (receive [(? (λ (x) (raise 'foo)) 'B)
-                        'B])))
-|#
- 
+
  (check-equal? (receive) 'B)
  
  (mailbox-clear)
@@ -112,7 +96,13 @@
                         
                         ['C 'C])
                
-               'hello))
+               'hello)
+ 
+ (mailbox-clear)
+ (thread-send (current-thread) "a")
+ (receive ("a"
+           #f))
+ (check-equal? (mailbox->list) empty))
 
 
 (test-case
@@ -120,10 +110,10 @@
  (mailbox-clear)
  (thread-send (current-thread) 'a)
  
- (receive [(? (λ (x) #f) 'a)
-           #f]
-          [(timeout 0)
-           #f])
+ (check-true (receive [(? (λ (x) #f) 'a)
+                         #f]
+                        [(timeout 0)
+                         #t]))
  
  (check-equal? (mailbox->list) '(a)))
 
@@ -155,6 +145,51 @@
  (check-false (try-receive ("b" #t)))
  
  (check-true (try-receive ("a" #t))))
+             
+
+;when an exception occurs within an event
+;the mailbox should be left in the same state it was in
+;prior to the call to receive
+
+(test-case
+ "handle-event-exception"
+ 
+ (mailbox-clear)
+ 
+ (thread-send (current-thread) "a")
+ (thread-send (current-thread) "b")
+ (thread-send (current-thread) "c")
+
+ (check-equal? (mailbox->list) (list "a" "b" "c"))
+ 
+ (with-handlers ([exn:break? (λ (e)
+                               (void))])
+   (receive [(timeout 1)
+             (break-thread (current-thread))]))
+ 
+ 
+ (check-equal? (mailbox->list) (list "a" "b" "c")))
                
-               
+;when an exception occurs within a match clause of receive
+;the value is considered consumed by the mailbox
+;and will not be restored to the mailbox 
+(test-case
+ "handle-exception"
+ 
+ (mailbox-clear)
+ 
+ (thread-send (current-thread) "a")
+ (thread-send (current-thread) "b")
+ (thread-send (current-thread) "c")
+ 
+ (check-equal? (mailbox->list) (list "a" "b" "c"))
+ 
+ (with-handlers ([exn:break? (λ (e)
+                               (void))])
+   (receive ["c"
+             (break-thread (current-thread))]))
+ 
+ (check-equal? (mailbox->list) (list "a" "b")))
+            
+ 
            
