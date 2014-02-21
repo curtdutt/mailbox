@@ -70,17 +70,17 @@ Mailbox-try-select returns the value returned by match
    (let loop ([unmatched-messages empty])                              
      (let ([next (thread-try-receive)])
        (if next
-           (call-with-exception-handler 
-            (λ (exn)
-              (thread-rewind-receive (cons next unmatched-messages))
-              exn)
-            (λ ()
-              (let ([result (match next)])
-                (if (equal? result fail-value)
-                    (loop (cons next unmatched-messages))
-                    (begin
-                      (thread-rewind-receive unmatched-messages)
-                      result)))))
+           (let ([result (call-with-exception-handler 
+                          (λ (exn)
+                            (thread-rewind-receive (cons next unmatched-messages))
+                            exn)
+                          (λ ()
+                            (parameterize-break #t (match next))))])
+             (if (equal? result fail-value)
+                 (loop (cons next unmatched-messages))
+                 (begin
+                   (thread-rewind-receive unmatched-messages)
+                   result)))
            (begin
              (thread-rewind-receive unmatched-messages)
              #f))))))
@@ -137,7 +137,6 @@ Mailbox-try-select returns the value returned by match
                            [_
                             no-match]))
                        #,@(syntax->list #'(E.event-code ... T.event-code ... W.event-code ...))))]))
-
 
 
 #|
