@@ -26,93 +26,100 @@
             (reverse lst))))))
 
 (define (mailbox-select #:match-fail-value (fail-value #f) proc . events)
-  (parameterize-break #f
-                      (let loop ([unmatched-messages empty])
-                        (let ([ready-event (call-with-exception-handler 
-                                            (λ (exn)
-                                              (thread-rewind-receive unmatched-messages)
-                                              exn)
-                                            (λ ()
-                                              (parameterize-break #t
-                                                                  (apply sync (thread-receive-evt) events))))])
-                          (if (equal? ready-event (thread-receive-evt))
-                              (let* ([next (thread-receive)]
-                                     [result
-                                      (call-with-exception-handler 
-                                       (λ (exn)
-                                         (thread-rewind-receive unmatched-messages)
-                                         exn)
-                                       (λ ()
-                                         (parameterize-break #t
-                                                             (proc next))))])
-                                (if (equal? result fail-value)
-                                    (loop (cons next unmatched-messages))
-                                    (begin
-                                      (thread-rewind-receive unmatched-messages)
-                                      result)))
-                              (begin
-                                (thread-rewind-receive unmatched-messages)
-                                ready-event))))))
+  (parameterize-break 
+   #f
+   (let loop ([unmatched-messages empty])
+     (let ([ready-event (call-with-exception-handler 
+                         (λ (exn)
+                           (thread-rewind-receive unmatched-messages)
+                           exn)
+                         (λ ()
+                           (parameterize-break 
+                            #t
+                            (apply sync (thread-receive-evt) events))))])
+       (if (equal? ready-event (thread-receive-evt))
+           (let* ([next (thread-receive)]
+                  [result
+                   (call-with-exception-handler 
+                    (λ (exn)
+                      (thread-rewind-receive (cons next unmatched-messages))
+                      exn)
+                    (λ ()
+                      (parameterize-break 
+                       #t
+                       (proc next))))])
+             (if (equal? result fail-value)
+                 (loop (cons next unmatched-messages))
+                 (begin
+                   (thread-rewind-receive unmatched-messages)
+                   result)))
+           (begin
+             (thread-rewind-receive unmatched-messages)
+             ready-event))))))
                                        
 
 #|
 Attempts to match and return the first message that does so.
-
 If no matches occur, then the mailbox is left unchanged and mailbox-try-select returns #f
-
-
-Match is function that takes a single value and returns either #f when it does not match or a value when it does match.
-
-Mailbox-try-select returns what match returns 
+Match is function that takes a single value and returns either #:match-fail-value when it does not match or a value when it does match.
+Mailbox-try-select returns the value returned by match
 |#
-(define (mailbox-try-select match)
+(define (mailbox-try-select #:match-fail-value (fail-value #f) match)
+  (parameterize-break 
+   #f
    (let loop ([unmatched-messages empty])                              
      (let ([next (thread-try-receive)])
        (if next
-           (cond [(match next) =>
-                               (λ (result)
-                                 (thread-rewind-receive unmatched-messages)
-                                 result)]
-                 [else
-                  (loop (cons next unmatched-messages))])
+           (call-with-exception-handler 
+            (λ (exn)
+              (thread-rewind-receive (cons next unmatched-messages))
+              exn)
+            (λ ()
+              (let ([result (match next)])
+                (if (equal? result fail-value)
+                    (loop (cons next unmatched-messages))
+                    (begin
+                      (thread-rewind-receive unmatched-messages)
+                      result)))))
            (begin
              (thread-rewind-receive unmatched-messages)
-             #f)))))
+             #f))))))
                    
 
 (begin-for-syntax
   (define-syntax-class match-clause
     #:description "match-clause"
-    (pattern (pat body ...+)))
+    (pattern (pat body ...+)
+             #:with match-code #'(pat (λ () body ...))))
   
   (define-syntax-class when-clause
     #:description "when-clause"
     (pattern (((~literal when) condition) code ...+)
-             #:with event-code #`(handle-evt (guard-evt 
+             #:with event-code #'(handle-evt (guard-evt 
                                               (λ () 
                                                 (if condition always-evt never-evt)))
                                              (λ (evt) 
-                                               code ...))))
+                                               (λ () code ...)))))
   
   (define-syntax-class timeout-clause
     #:description "timeout-clause"
     (pattern (((~literal timeout) time) code ...+)
-             #:with event-code #`(handle-evt (guard-evt 
+             #:with event-code #'(handle-evt (guard-evt 
                                               (λ () 
                                                 (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)))
                                              (λ (evt) 
-                                               code ...))))
+                                               (λ () code ...)))))
   
   (define-syntax-class event-clause
     #:description "event-claues"
     (pattern (((~literal event) evt) code ...+)
-             #:with event-code #`(handle-evt evt           
+             #:with event-code #'(handle-evt evt           
                                              (λ (e)
-                                               code ...)))
+                                               (λ () code ...))))
     (pattern (((~literal event) evt id:id) code ...+)
-             #:with event-code #`(handle-evt evt           
+             #:with event-code #'(handle-evt evt           
                                              (λ (e)
-                                               ((λ (id) code ...) e))))))
+                                               (λ () ((λ (id) code ...) e)))))))
   
 (define no-match (gensym 'no-match))
 
@@ -121,15 +128,15 @@ Mailbox-try-select returns what match returns
 (define-syntax (receive stx)
   (syntax-parse stx
     [(_)
-     #`(thread-receive)]
+     #'(thread-receive)]
     [(_ (~or E:event-clause T:timeout-clause W:when-clause M:match-clause) ...)
-     #`(mailbox-select #:match-fail-value no-match
+     #`((mailbox-select #:match-fail-value no-match
                        (λ (msg) 
                          (match msg
-                           #,@#'(M ...)
+                           #,@#'(M.match-code ...)
                            [_
                             no-match]))
-                       #,@(syntax->list #'(E.event-code ... T.event-code ... W.event-code ...)))]))
+                       #,@(syntax->list #'(E.event-code ... T.event-code ... W.event-code ...))))]))
 
 
 
