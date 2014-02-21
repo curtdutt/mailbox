@@ -6,7 +6,7 @@
          racket/function
          racket/list)
 
-(require "../mailbox.rkt")
+(require mailbox)
 
 
 
