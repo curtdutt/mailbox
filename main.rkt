@@ -89,12 +89,12 @@ Mailbox-try-select returns the value returned by match
 (begin-for-syntax
   (define-syntax-class match-clause
     #:description "match-clause"
-    (pattern (pat body ...+)
+    (pattern (pat body:expr ...+)
              #:with match-code #'(pat (λ () body ...))))
   
   (define-syntax-class when-clause
     #:description "when-clause"
-    (pattern (((~literal when) condition) code ...+)
+    (pattern (((~literal when) condition:expr) code:expr ...+)
              #:with event-code #'(handle-evt (guard-evt 
                                               (λ () 
                                                 (if condition always-evt never-evt)))
@@ -103,7 +103,7 @@ Mailbox-try-select returns the value returned by match
   
   (define-syntax-class timeout-clause
     #:description "timeout-clause"
-    (pattern (((~literal timeout) time) code ...+)
+    (pattern (((~literal timeout) time:expr) code:expr ...+)
              #:with event-code #'(handle-evt (guard-evt 
                                               (λ () 
                                                 (if time (alarm-evt (+ (current-inexact-milliseconds) (* time 1000))) never-evt)))
@@ -112,11 +112,11 @@ Mailbox-try-select returns the value returned by match
   
   (define-syntax-class event-clause
     #:description "event-claues"
-    (pattern (((~literal event) evt) code ...+)
+    (pattern (((~literal event) evt:expr) code:expr ...+)
              #:with event-code #'(handle-evt evt           
                                              (λ (e)
                                                (λ () code ...))))
-    (pattern (((~literal event) evt id:id) code ...+)
+    (pattern (((~literal event) evt:expr id:id) code:expr ...+)
              #:with event-code #'(handle-evt evt           
                                              (λ (e)
                                                (λ () ((λ (id) code ...) e)))))))
