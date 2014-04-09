@@ -12,8 +12,9 @@
          (for-syntax syntax/parse))
 
 (define (mailbox-clear)
-  (when (thread-try-receive)
-    (mailbox-clear)))
+  (if (thread-try-receive)
+      (mailbox-clear)
+      (void)))
 
 
 (define (mailbox->list)
